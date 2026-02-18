@@ -1,0 +1,97 @@
+# mosquitto-deploy.yaml
+# Déploie Mosquitto en Deployment + Service NodePort.
+# Hypothèses :
+# - Vous avez un cluster KubeEdge/Kubernetes fonctionnel (kubectl configuré).
+# - Le node edge (gateway) peut exposer un NodePort.
+# - Les devices MQTT pointeront vers IP_GATEWAY:31883 (par défaut).
+#
+# Appliquer :
+#   kubectl apply -f mosquitto-deploy.yaml
+# Vérifier :
+#   kubectl get pods -o wide
+#   kubectl get svc mosquitto
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tp-edge
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: tp-edge
+data:
+  mosquitto.conf: |
+    # Listener MQTT
+    listener 1883
+    protocol mqtt
+
+    # Logs (utile en TP)
+    log_type all
+
+    # Mode TP par défaut : anonyme autorisé
+    # (à durcir dans le bonus sécurité MQTT)
+    allow_anonymous true
+
+    # Persistence (désactivée pour simplifier)
+    persistence false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: tp-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1883
+              name: mqtt
+          volumeMounts:
+            - name: mosquitto-config-vol
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+          readinessProbe:
+            tcpSocket:
+              port: 1883
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 1883
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: mosquitto-config-vol
+          configMap:
+            name: mosquitto-config
+            items:
+              - key: mosquitto.conf
+                path: mosquitto.conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: tp-edge
+spec:
+  type: NodePort
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+      nodePort: 31883
