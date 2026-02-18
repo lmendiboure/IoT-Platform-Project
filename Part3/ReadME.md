@@ -348,7 +348,7 @@ C’est un test critique.
 
 ---
 
-# 7. Intégration avec EdgeX (supervision structurée)
+# 7. Intégration avec EdgeX (
 
 Maintenant que MQTT fonctionne, nous allons connecter cette remontée à une plateforme Edge réelle.
 
@@ -431,116 +431,177 @@ Chaque message MQTT devient un Event EdgeX.
 
 ---
 
-# 8. Mise en place de la commande SetMode
+# 8. EdgeX : première vérification via l’UI (sans encore parler de commandes)
 
-Nous allons maintenant inverser le flux.
+À ce stade, votre objectif est simplement de vérifier que la **plateforme EdgeX est démarrée**.
 
-- EdgeX → MQTT → Device
+## 8.1 Accéder à l’UI
 
----
+Ouvrir :
 
-# 8.1 Pourquoi un Device Profile ?
+- `http://IP_GATEWAY:4000`
 
-EdgeX ne peut pas deviner :
-
-- ce qu’est un device,
-- quelles données il expose,
-- quelles commandes il accepte.
-
-Le profile décrit :
-
-- les ressources,
-- les commandes.
-
-C’est une description formelle.
-
----
-
-# 8.2 Injection du profile
+Si cela ne répond pas :
 
 ```bash
-curl -X POST http://IP_GATEWAY:59881/api/v2/deviceprofile \
--H "Content-Type: application/yaml" \
---data-binary @profile-device-mode.yaml
+docker ps | grep -E "ui|edgex"
 ```
+
+et vérifiez que le port 4000 est bien exposé dans le docker-compose.yml.
+
+# 8.2 Ce que vous devez constater dans l’UI
+
+Dans l’UI, repérez :
+- les services EdgeX principaux (Core Data, Core Metadata, Core Command, device-mqtt)
+- leur état général (UP)
+
+Important :
+À ce moment, il est normal de ne voir aucun device ou très peu d’éléments.
+EdgeX ne “découvre” pas vos devices automatiquement : il faut les déclarer.
+
+> L’UI sert ici à vérifier : “la plateforme tourne”, pas encore “le système complet fonctionne”.
 
 ---
 
-# 8.3 Injection du device
+# 9. Définir ce qu’un device sait faire : injection du Device Profile
 
-```bash
-curl -X POST http://IP_GATEWAY:59881/api/v2/device \
--H "Content-Type: application/json" \
---data-binary @device1.json
-```
+EdgeX sépare deux choses :
 
----
+- **Device Profile** : description des capacités (ressources et commandes possibles)
+- **Device** : une instance concrète (nom, protocole, paramètres MQTT)
 
-# 8.4 Découvrir la commande
+Dans cette étape, vous allez d’abord injecter le profile.
+C’est ce profile qui décrit, par exemple, qu’une commande SetMode existe.
 
-```bash
-curl http://IP_GATEWAY:59882/api/v2/device/name/device1
-```
-
-Repérez la commande SetMode.
-
-Ne devinez jamais une API. Découvrez-la.
-
----
-
-# 8.5 Envoyer la commande
-
-```bash
-curl -X PUT \
-http://IP_GATEWAY:59882/api/v2/device/name/device1/command/SetMode \
--H "Content-Type: application/json" \
--d '{"Mode":"DEGRADED"}'
-```
+## 9.1 Injecter le profile
 
 Sur la gateway :
 
 ```bash
-mosquitto_sub -h localhost -t "tp/device1/cmd"
+curl -X POST "http://IP_GATEWAY:59881/api/v2/deviceprofile" \
+  -H "Content-Type: application/yaml" \
+  --data-binary "@profile-device-mode.yaml"
 ```
 
-La commande doit apparaître.
+Vérifier :
+
+```bash
+curl "http://IP_GATEWAY:59881/api/v2/deviceprofile/name/device-mode-profile" | head
+```
+
+# 9.2 Vérifier dans l’UI
+
+Dans l’UI :
+
+- aller dans Device Profiles
+- vérifier que device-mode-profile apparaît
+- ouvrir le profile et repérer :
+    - la ressource Mode
+    - la commande SetMode
+
+Expliquez la différence entre “ressource” (Mode) et “commande” (SetMode). pourquoi EdgeX a besoin de ce fichier pour standardiser une commande ?
 
 ---
 
-# 9. Expérimentation complète
+# 10. Associer ce profile à un device réel : injection du Device
 
-1. Lancer la boucle en NORMAL.
-2. Ajouter stress CPU.
-3. Envoyer SetMode=DEGRADED.
-4. Observer jitter.
-5. Revenir NORMAL.
-6. Comparer.
+Le profile décrit des capacités “en général”.
+Maintenant, on déclare un device concret (device1) en précisant comment lui parler (ici MQTT).
+
+## 10.1 Injecter le device
+
+```bash
+curl -X POST "http://IP_GATEWAY:59881/api/v2/device" \
+  -H "Content-Type: application/json" \
+  --data-binary "@device1.json"
+```
+
+Vérifier :
+
+```bash
+curl "http://IP_GATEWAY:59881/api/v2/device/name/device1" | head
+```
+
+## 10.2 Vérifier dans l’UI
+
+Dans l’UI :
+
+- aller dans Devices
+- vérifier que device1 apparaît
+- vérifier qu’il est associé au profile device-mode-profile
+
+> À ce stade : EdgeX sait que device1 existe, et sait qu’il peut recevoir une commande SetMode.
+
+---
+
+# 11. Observer les données (Events) puis tester la commande (SetMode)
+
+On valide maintenant deux choses différentes :
+
+A) la remontée de métriques (MQTT → EdgeX → Core Data)
+B) la boucle de retour (EdgeX → MQTT → device)
+
+11.A Remontée : vérifier les Events
+11.A.1 Vérification côté MQTT (CLI)
+
+Sur la gateway :
+
+mosquitto_sub -h localhost -t "tp/device1/metrics" -v
+
+
+Si vous ne voyez rien, le problème est côté device / réseau MQTT.
+
+### 11.A.2 Vérification côté EdgeX (CLI)
+
+```bash
+curl "http://IP_GATEWAY:59880/api/v2/event?limit=5" | head -n 60
+```
+
+### 11.A.3 Vérification côté UI
+
+Dans l’UI → Events :
+- ouvrir un event récent
+- repérer les readings (jitter, workload, etc.)
+- vérifier que l’arrivée est ~toutes les 200 ms (sans être parfaitement régulière)
+
+Question :
+- pourquoi l’intervalle n’est-il pas strictement 200 ms ? (au moins 3 causes : Wi-Fi, scheduling, docker, broker, etc.)
+
+## 11.B Boucle de retour : exécuter SetMode
+
+### 11.B.1 Test via l’UI (plus intuitif)
+
+UI → **Devices** → `device1` → **Commands** → SetMode
+
+- envoyer DEGRADED, puis NORMAL
+
+### 11.B.2 Vérifier que la commande sort bien en MQTT (debug)
+
+Sur la gateway :
+
+```bash
+mosquitto_sub -h localhost -t "tp/device1/cmd" -v
+```
+
+# 11.B.3 Vérifier côté device
+
+Côté device, vous devez voir :
+- réception du message `{"Mode":"..."}` (log/print)
+- mise à jour de la variable `mode`
+- modification progressive du comportement (workload ↓ en DEGRADED)
+
+### 11.B.4 Vérifier dans les Events suivants
+
+Dans l’UI → Events :
+
+- l’event suivant doit contenir `mode: DEGRADED` (si vous publiez ce champ)
+- et idéalement montrer une évolution des métriques
 
 --- 
 
-# 10. Discussion finale
+# 12. Point pédagogique clé
 
-Expliquez :
-
-- Pourquoi la boucle reste locale.
-- Pourquoi EdgeX introduit de la variabilité.
-- Pourquoi cette architecture est cohérente.
-- Pourquoi elle est soft real-time.
-- Ce qui se passe si la gateway tombe.
-
----
-
-# 11. Message pédagogique clé
-
-Vous avez construit :
-
-- un système embarqué local,
-- une supervision distante,
-- une orchestration lente,
-- une séparation des plans,
-- une architecture distribuée réaliste.
-
-Le temps critique reste maîtrisé localement.
-Le réseau reste non déterministe.
-La plateforme structure et orchestre.
-
+- Le profile définit ce qu’un device sait faire (ex : SetMode).
+- Le device instancie un profile et précise “comment lui parler” (MQTT + topics).
+- Les Events montrent la supervision (retardée, échantillonnée).
+- La commande SetMode est une boucle de retour soft real-time.
