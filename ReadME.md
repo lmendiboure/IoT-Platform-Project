@@ -64,7 +64,6 @@ Chaque device exécutera :
 
 - une boucle locale périodique (≈ 20 ms)
 - un mécanisme d’adaptation basé sur l’état système (charge CPU)
-- une estimation énergétique simplifiée
 - une publication périodique vers la gateway (≈ 200 ms)
 
 La gateway :
