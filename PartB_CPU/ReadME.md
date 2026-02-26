@@ -188,7 +188,7 @@ Ces pics correspondent à des interférences système. L’objectif de l’isola
 Installer :
 
 ```bash
-sudo apt install cset
+sudo apt install cpuset
 ```
 
 Créer un cœur protégé (ex : CPU 2) :
